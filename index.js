@@ -639,6 +639,24 @@ function updateSelectOptions() {
         errorSelect.val('');
         settings.errorSound = '';
     })();
+
+    // 更新删除按钮的显示状态
+    updateDeleteButtonVisibility();
+}
+
+// 更新删除按钮的显示状态（仅当选中自定义音效时显示）
+function updateDeleteButtonVisibility() {
+    const settings = extension_settings[extensionName];
+
+    // 成功音效删除按钮
+    const successVal = settings.successSound;
+    const isSuccessCustom = typeof successVal === 'string' && successVal.startsWith('idb:');
+    $('#vertin-tips-delete-success').toggle(isSuccessCustom);
+
+    // 错误音效删除按钮
+    const errorVal = settings.errorSound;
+    const isErrorCustom = typeof errorVal === 'string' && errorVal.startsWith('idb:');
+    $('#vertin-tips-delete-error').toggle(isErrorCustom);
 }
 
 // 添加设置界面
@@ -677,6 +695,9 @@ function addSettingsUI() {
                             <button id="vertin-tips-upload-success" class="menu_button" title="上传本地文件">
                                 <i class="fa-solid fa-upload"></i>
                             </button>
+                            <button id="vertin-tips-delete-success" class="menu_button" title="删除当前自定义音效" style="display:none;">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
                             <input id="vertin-tips-file-success" type="file" accept="audio/*,.mp3,.wav,.ogg" style="display:none" />
                         </div>
                     </div>
@@ -693,6 +714,9 @@ function addSettingsUI() {
                             </button>
                             <button id="vertin-tips-upload-error" class="menu_button" title="上传本地文件">
                                 <i class="fa-solid fa-upload"></i>
+                            </button>
+                            <button id="vertin-tips-delete-error" class="menu_button" title="删除当前自定义音效" style="display:none;">
+                                <i class="fa-solid fa-trash"></i>
                             </button>
                             <input id="vertin-tips-file-error" type="file" accept="audio/*,.mp3,.wav,.ogg" style="display:none" />
                         </div>
@@ -737,6 +761,7 @@ function bindSettingsControls() {
         settings.successSound = $(this).val();
         saveSettingsDebounced();
         initAudio();
+        updateDeleteButtonVisibility();
     });
 
     // 错误音选择
@@ -744,6 +769,7 @@ function bindSettingsControls() {
         settings.errorSound = $(this).val();
         saveSettingsDebounced();
         initAudio();
+        updateDeleteButtonVisibility();
     });
 
     // 音量滑块
@@ -831,6 +857,55 @@ function bindSettingsControls() {
             console.error(e);
             if (window.toastr) toastr.error('添加失败');
         }
+    });
+
+    // ========== 删除自定义音效 ==========
+    async function handleDelete(kind) {
+        const val = kind === 'success' ? settings.successSound : settings.errorSound;
+
+        // 检查是否是自定义音效
+        if (!val || typeof val !== 'string' || !val.startsWith('idb:')) {
+            if (window.toastr) toastr.warning('只能删除自定义音效');
+            return;
+        }
+
+        const id = val.slice(4);
+        const rec = getCustomById(kind, id);
+        const name = rec?.name || '此音效';
+
+        // 确认删除
+        if (!confirm(`确定要删除「${name}」吗？此操作不可恢复。`)) {
+            return;
+        }
+
+        try {
+            await deleteCustomItem(id);
+
+            // 清空当前选择
+            if (kind === 'success') {
+                settings.successSound = '';
+            } else {
+                settings.errorSound = '';
+            }
+            saveSettingsDebounced();
+            updateSelectOptions();
+            initAudio();
+
+            if (window.toastr) toastr.success('已删除音效');
+        } catch (e) {
+            console.error(`[${extensionName}] 删除失败:`, e);
+            if (window.toastr) toastr.error('删除失败');
+        }
+    }
+
+    // 删除成功音效
+    $('#vertin-tips-delete-success').on('click', function() {
+        handleDelete('success');
+    });
+
+    // 删除错误音效
+    $('#vertin-tips-delete-error').on('click', function() {
+        handleDelete('error');
     });
 
 
