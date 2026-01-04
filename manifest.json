@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "",
     "author": "RaphllA",
-    "version": "1.0.3",
+    "version": "1.1.0",
     "homePage": "https://github.com/RaphllA/vertin-tips",
-    "description": "简洁的AI回复提示音插件"
+    "description": "简洁的AI回复提示音插件，支持标签页闪烁提醒"
 }

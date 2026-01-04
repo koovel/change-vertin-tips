@@ -7,11 +7,76 @@ const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
 
 // 默认设置
 const defaultSettings = {
-    enabled: true,
+    soundEnabled: true,      // 音效开关
+    flashTabEnabled: true,   // 标签页闪烁开关
     volume: 0.5,
     successSound: 'voice.mp3',  // 成功提示音文件名
     errorSound: 'error_normal.mp3'  // 错误提示音文件名
 };
+
+// 设置 Favicon 的辅助函数
+function setFavicon(href, useCacheBuster = false) {
+    let faviconLink = document.querySelector("link[rel='icon']") || document.querySelector("link[rel='shortcut icon']");
+
+    if (!faviconLink) {
+        faviconLink = document.createElement('link');
+        faviconLink.rel = 'shortcut icon';
+        faviconLink.type = 'image/x-icon';
+        document.head.appendChild(faviconLink);
+    }
+
+    let finalHref = href;
+    if (useCacheBuster) {
+        finalHref += `?v=${Date.now()}`;
+    }
+
+    faviconLink.href = finalHref;
+}
+
+// 标签页闪烁管理器
+const tabFlasher = {
+    originalTitle: document.title,
+    originalFavicon: document.querySelector("link[rel='icon']")?.href || document.querySelector("link[rel='shortcut icon']")?.href || '/favicon.ico',
+    intervalId: null,
+    isFlashing: false,
+
+    // 闪烁用的 Favicon 路径
+    orangeFavicon: `/${extensionFolderPath}/Doro1.ico`,
+    yellowFavicon: `/${extensionFolderPath}/Doro2.ico`,
+
+    start: function (newTitle) {
+        if (this.isFlashing || document.hasFocus()) return;
+
+        this.isFlashing = true;
+        let state = 0;
+
+        this.intervalId = setInterval(() => {
+            if (state === 0) {
+                document.title = newTitle;
+                setFavicon(this.orangeFavicon, true);
+                state = 1;
+            } else {
+                document.title = this.originalTitle;
+                setFavicon(this.yellowFavicon, true);
+                state = 0;
+            }
+        }, 800);
+    },
+
+    stop: function () {
+        if (!this.isFlashing) return;
+
+        this.isFlashing = false;
+        clearInterval(this.intervalId);
+        document.title = this.originalTitle;
+        setFavicon(this.originalFavicon, false);
+    }
+};
+
+// 当用户切换回此标签页时，停止闪烁
+window.addEventListener('focus', () => {
+    tabFlasher.stop();
+});
 
 // 音频对象
 let successSound = null;  // 成功提示音
@@ -49,6 +114,20 @@ jQuery(async () => {
    // 加载设置
    if (!extension_settings[extensionName]) {
        extension_settings[extensionName] = defaultSettings;
+   }
+
+   // 兼容旧设置：将 enabled 迁移到 soundEnabled
+   const settings = extension_settings[extensionName];
+   if (settings.enabled !== undefined && settings.soundEnabled === undefined) {
+       settings.soundEnabled = settings.enabled;
+       delete settings.enabled;
+   }
+   // 确保新属性存在
+   if (settings.soundEnabled === undefined) {
+       settings.soundEnabled = defaultSettings.soundEnabled;
+   }
+   if (settings.flashTabEnabled === undefined) {
+       settings.flashTabEnabled = defaultSettings.flashTabEnabled;
    }
 
    // 初始化并读取自定义音频清单（IndexedDB）
@@ -366,7 +445,7 @@ function interceptFetchErrors() {
                     generationState.lastErrorTime = Date.now();
 
                     // 延迟播放错误音，让toastr先显示
-                    if (extension_settings[extensionName].enabled) {
+                    if (extension_settings[extensionName].soundEnabled) {
                         setTimeout(() => {
                             playErrorSound();
                         }, 200);
@@ -383,7 +462,7 @@ function interceptFetchErrors() {
                 generationState.wasStoppedOrError = true;
                 generationState.lastErrorTime = Date.now();
 
-                if (extension_settings[extensionName].enabled) {
+                if (extension_settings[extensionName].soundEnabled) {
                     setTimeout(() => {
                         playErrorSound();
                     }, 200);
@@ -448,7 +527,7 @@ function interceptToastrErrors() {
             generationState.lastErrorTime = Date.now();
 
             // 如果正在生成，播放错误音
-            if (generationState.isGenerating && extension_settings[extensionName].enabled) {
+            if (generationState.isGenerating && extension_settings[extensionName].soundEnabled) {
                 setTimeout(() => {
                     playErrorSound();
                 }, 100); // 小延迟确保其他处理完成
@@ -471,7 +550,7 @@ function onGenerationStopped() {
     // 只在手动停止时播放错误音（API错误由toastr拦截处理）
     // 检查是否刚刚有API错误（1秒内）
     const timeSinceError = Date.now() - generationState.lastErrorTime;
-    if (settings.enabled && timeSinceError > 1000) {
+    if (settings.soundEnabled && timeSinceError > 1000) {
         playErrorSound();
     }
 }
@@ -484,11 +563,19 @@ function onGenerationEnded() {
     const hasError = generationState.wasStoppedOrError ||
                     (Date.now() - generationState.lastErrorTime < 2000);
 
-    // 只有在启用且没有错误的情况下才播放成功音
-    if (settings.enabled && !hasError && generationState.isGenerating) {
-        console.log(`[${extensionName}] AI回复成功，播放成功音`);
-        playSuccessSound();
-    } else if (settings.enabled && hasError) {
+    // 成功完成时的处理
+    if (!hasError && generationState.isGenerating) {
+        // 播放成功音（独立判断）
+        if (settings.soundEnabled) {
+            console.log(`[${extensionName}] AI回复成功，播放成功音`);
+            playSuccessSound();
+        }
+
+        // 标签页闪烁（独立判断）
+        if (settings.flashTabEnabled && !document.hasFocus()) {
+            tabFlasher.start('【新消息！】');
+        }
+    } else if (settings.soundEnabled && hasError) {
         console.log(`[${extensionName}] 生成结束但有错误，不播放成功音`);
     }
 
@@ -674,10 +761,14 @@ function addSettingsUI() {
             </div>
             <div id="vertin-tips-content" class="inline-drawer-content" style="display: none;">
                 <div style="padding: 10px;">
-                    <div style="margin-bottom: 10px;">
+                    <div style="display: flex; gap: 20px; margin-bottom: 10px;">
                         <label class="checkbox_label">
-                            <input id="vertin-tips-enabled" type="checkbox" />
+                            <input id="vertin-tips-sound-enabled" type="checkbox" />
                             <span>启用提示音</span>
+                        </label>
+                        <label class="checkbox_label">
+                            <input id="vertin-tips-flash-enabled" type="checkbox" />
+                            <span>启用标签页闪烁</span>
                         </label>
                     </div>
 
@@ -752,11 +843,19 @@ function addSettingsUI() {
 function bindSettingsControls() {
     const settings = extension_settings[extensionName];
 
-    // 启用/禁用开关
-    $('#vertin-tips-enabled')
-        .prop('checked', settings.enabled)
+    // 音效开关
+    $('#vertin-tips-sound-enabled')
+        .prop('checked', settings.soundEnabled)
         .on('change', function() {
-            settings.enabled = $(this).prop('checked');
+            settings.soundEnabled = $(this).prop('checked');
+            saveSettingsDebounced();
+        });
+
+    // 标签页闪烁开关
+    $('#vertin-tips-flash-enabled')
+        .prop('checked', settings.flashTabEnabled)
+        .on('change', function() {
+            settings.flashTabEnabled = $(this).prop('checked');
             saveSettingsDebounced();
         });
 
