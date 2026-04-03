@@ -164,12 +164,13 @@ async function scanAudioFiles() {
             ['voice.mp3', 'okay.mp3', '叮咚鸡！.mp3', 'success.mp3',
              'complete.mp3', 'done.mp3', 'notify.mp3', '星际曼波.mp3', '哈基米.mp3', '花Q.mp3',
              'Ciallo.mp3', '咕咕嘎嘎.wav', '奖励.mp3', '曼波.mp3', '曼波欧耶.mp3', '曼波傻笑.mp3',
-             '新的订单查收.mp3'].forEach(f => testFiles.add(f));
+             '新的订单查收.mp3', 'man！.mp3', 'what can i say.mp3', '曼巴out.mp3'].forEach(f => testFiles.add(f));
         } else {
             ['error_normal.mp3', 'error.mp3', 'fail.mp3', 'warning.mp3', 'faq.mp3',
              '星际曼波.mp3', '哈基米.mp3', 'another.mp3', 'Ciallo.mp3',
              '我劝你别用.mp3', '曼波傻笑.mp3', '曼波欧耶.mp3', '曼波.mp3', '奖励.mp3',
-             '咕咕嘎嘎.wav', '钢管（音量注意）.mp3'].forEach(f => testFiles.add(f));
+             '咕咕嘎嘎.wav', '钢管（音量注意）.mp3', 'man！.mp3', 'what can i say.mp3',
+             '曼巴out.mp3'].forEach(f => testFiles.add(f));
         }
 
         // 添加用户可能添加的文件名（减少测试数量）
