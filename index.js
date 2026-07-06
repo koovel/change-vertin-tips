@@ -432,8 +432,8 @@ function interceptFetchErrors() {
 
     window.fetch = async function(...args) {
         try {
-            const response = await originalFetch.apply(this, args);
-            const url = args[0]?.toString() || '';
+            const response = await originalFetch.apply(window, args);
+            const url = (args[0]?.url) || (args[0]?.toString ? args[0].toString() : String(args[0] || ''));
 
             // 检查是否是API请求且返回错误状态
             if (url.includes('/api/') && !response.ok && response.status >= 400) {
@@ -457,7 +457,7 @@ function interceptFetchErrors() {
             return response;
         } catch (error) {
             // 网络错误（无法连接、超时等）
-            const url = args[0]?.toString() || '';
+            const url = (args[0]?.url) || (args[0]?.toString ? args[0].toString() : String(args[0] || ''));
             if (url.includes('/api/') && generationState.isGenerating) {
                 console.log(`[${extensionName}] 检测到网络错误: ${error.message}`);
                 generationState.wasStoppedOrError = true;
@@ -476,6 +476,11 @@ function interceptFetchErrors() {
 
 // 拦截toastr错误消息
 function interceptToastrErrors() {
+    // toastr 可能尚未加载，加守卫
+    if (!window.toastr || typeof window.toastr.error !== "function") {
+        console.warn(`[${extensionName}] toastr 不可用，跳过错误拦截`);
+        return;
+    }
     // 保存原始的toastr.error函数
     const originalToastrError = window.toastr.error;
 
@@ -923,7 +928,7 @@ function bindSettingsControls() {
             saveSettingsDebounced();
             updateSelectOptions();
             initAudio();
-            if (window.toastr) toastr.success('已添加并选中音频');
+            if (window.toastr) window.toastr.success('已添加并选中音频');
         } catch (e) {
             console.error(`[${extensionName}] 添加后处理失败:`, e);
         }
@@ -936,13 +941,13 @@ function bindSettingsControls() {
     $('#vertin-tips-file-success').on('change', async function() {
         const file = this.files && this.files[0];
         const msg = validateFile(file);
-        if (msg) { if (window.toastr) toastr.error(msg); return; }
+        if (msg) { if (window.toastr) window.toastr.error(msg); return; }
         try {
             const rec = await addCustomFile('success', file);
             await afterAdd('success', rec);
         } catch (e) {
             console.error(e);
-            if (window.toastr) toastr.error('添加失败');
+            if (window.toastr) window.toastr.error('添加失败');
         }
     });
 
@@ -953,13 +958,13 @@ function bindSettingsControls() {
     $('#vertin-tips-file-error').on('change', async function() {
         const file = this.files && this.files[0];
         const msg = validateFile(file);
-        if (msg) { if (window.toastr) toastr.error(msg); return; }
+        if (msg) { if (window.toastr) window.toastr.error(msg); return; }
         try {
             const rec = await addCustomFile('error', file);
             await afterAdd('error', rec);
         } catch (e) {
             console.error(e);
-            if (window.toastr) toastr.error('添加失败');
+            if (window.toastr) window.toastr.error('添加失败');
         }
     });
 
@@ -969,7 +974,7 @@ function bindSettingsControls() {
 
         // 检查是否是自定义音效
         if (!val || typeof val !== 'string' || !val.startsWith('idb:')) {
-            if (window.toastr) toastr.warning('只能删除自定义音效');
+            if (window.toastr) window.toastr.warning('只能删除自定义音效');
             return;
         }
 
@@ -995,10 +1000,10 @@ function bindSettingsControls() {
             updateSelectOptions();
             initAudio();
 
-            if (window.toastr) toastr.success('已删除音效');
+            if (window.toastr) window.toastr.success('已删除音效');
         } catch (e) {
             console.error(`[${extensionName}] 删除失败:`, e);
-            if (window.toastr) toastr.error('删除失败');
+            if (window.toastr) window.toastr.error('删除失败');
         }
     }
 
