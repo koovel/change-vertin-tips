@@ -853,11 +853,21 @@ function addSettingsUI() {
 
                     <!-- 屏蔽列表 -->
                     <div style="margin-bottom: 10px;">
-                        <label>屏蔽扩展（勾选后该扩展的错误完全不触发提示音）:</label>
-                        <div id="vertin-tips-blocklist" style="max-height: 160px; overflow-y: auto; border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 6px; display: flex; flex-direction: column; gap: 4px;">
+                        <label>屏蔽列表（勾选的扩展/关键词出错时不触发提示音）:</label>
+                        <!-- 自定义关键词输入 -->
+                        <div style="display: flex; gap: 5px; align-items: center; flex-wrap: wrap; margin-bottom: 6px;">
+                            <input id="vertin-tips-blocklist-custom" type="text" class="text_pole" placeholder="自定义URL关键词，如: baibaoku" style="flex: 1; min-width: 160px;" />
+                            <button id="vertin-tips-blocklist-add" class="menu_button" title="添加关键词">
+                                <i class="fa-solid fa-plus"></i>
+                            </button>
+                        </div>
+                        <!-- 搜索框 -->
+                        <input id="vertin-tips-blocklist-search" type="text" class="text_pole" placeholder="搜索扩展..." style="width: 100%; margin-bottom: 4px;" />
+                        <!-- 列表容器 -->
+                        <div id="vertin-tips-blocklist" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 6px; display: flex; flex-direction: column; gap: 2px;">
                         </div>
                         <div style="margin-top: 4px; font-size: 12px; color: #888; line-height: 1.4;">
-                            勾选的扩展出错时不播放错误音，也不影响成功音。列表自动获取已安装扩展。
+                            勾选的扩展出错时不播放错误音，也不影响成功音。已勾选的自动置顶。部分扩展的API路径名与文件夹名不同，可用上方输入框添加自定义关键词。
                         </div>
                     </div>
                 </div>
@@ -930,15 +940,34 @@ function bindSettingsControls() {
 
     // 屏蔽列表：自动获取已安装扩展，渲染为复选框
     if (!Array.isArray(settings.soundBlocklist)) settings.soundBlocklist = [];
+    // 尝试从DOM获取已安装扩展的显示名和文件夹名
+    let extDisplayNameMap = {};
+    async function loadExtDisplayNames() {
+        try {
+            // SillyTavern扩展面板: .extension_block[data-name] + .extension_name
+            const items = $('#extensions_settings .extension_block, #extensions_list .extension_block');
+            items.each(function() {
+                let name = String($(this).data('name') || '');
+                // DOM里data-name可能是 "/ST-BaiBai-Tools" 或 "third-party/ST-BaiBai-Tools"
+                if (name.startsWith('/') ) name = 'third-party' + name;
+                const display = $(this).find('.extension_name').first().text().trim() || name;
+                if (name) extDisplayNameMap[name] = display;
+            });
+        } catch {}
+    }
+    loadExtDisplayNames();
     renderBlocklist();
+    // 延迟重新渲染，确保扩展面板DOM已加载完成
+    setTimeout(() => { loadExtDisplayNames(); renderBlocklist(); }, 1000);
+    setTimeout(() => { loadExtDisplayNames(); renderBlocklist(); }, 3000);
 
     function renderBlocklist() {
         const container = $('#vertin-tips-blocklist');
         container.empty();
 
         const names = Array.isArray(window.extensionNames) ? window.extensionNames : (Array.isArray(extensionNames) ? extensionNames : []);
-        // 合并：已安装扩展 + settings中保存但当前可能未安装的（避免丢失）
-        const allNames = [...new Set([...names, ...settings.soundBlocklist])].sort((a, b) => a.localeCompare(b));
+        // 合并：已安装扩展 + settings中保存的自定义关键词
+        const allNames = [...new Set([...names, ...settings.soundBlocklist])];
 
         if (allNames.length === 0) {
             container.append('<div style="font-size: 12px; color: #888;">未检测到已安装扩展</div>');
@@ -946,17 +975,46 @@ function bindSettingsControls() {
         }
 
         const blocked = new Set(settings.soundBlocklist);
-        for (const name of allNames) {
-            const id = `vertin-tips-bl-${name.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-            const isChecked = blocked.has(name);
-            const item = $(`
-                <label class="checkbox_label" style="margin: 0; padding: 2px 6px; font-size: 13px;" title="${name}">
-                    <input type="checkbox" id="${id}" data-ext="${name}" ${isChecked ? 'checked' : ''} />
-                    <span>${name}</span>
-                </label>`);
-            container.append(item);
+        const searchQuery = ($('#vertin-tips-blocklist-search').val() || '').toLowerCase().trim();
+
+        // 构建显示列表：{name, display, isCustom, isBlocked}
+        let items = allNames.map(name => {
+            const isInstalled = names.includes(name);
+            const display = extDisplayNameMap[name] || name;
+            const isBlocked = blocked.has(name);
+            const isCustom = !isInstalled;
+            return { name, display, isBlocked, isCustom };
+        });
+
+        // 搜索过滤
+        if (searchQuery) {
+            items = items.filter(item =>
+                item.name.toLowerCase().includes(searchQuery) ||
+                item.display.toLowerCase().includes(searchQuery)
+            );
         }
 
+        // 排序：已勾选置顶 → 自定义关键词 → 已安装扩展（按显示名）
+        items.sort((a, b) => {
+            if (a.isBlocked !== b.isBlocked) return a.isBlocked ? -1 : 1;
+            if (a.isCustom !== b.isCustom) return a.isCustom ? -1 : 1;
+            return a.display.localeCompare(b.display);
+        });
+
+        for (const item of items) {
+            const id = `vertin-tips-bl-${item.name.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+            const label = item.isCustom
+                ? `${item.display} <i class="fa-solid fa-xmark" style="opacity:0.5;margin-left:4px;cursor:pointer;" data-del="${item.name}" title="删除"></i>`
+                : item.display;
+            const row = $(`
+                <label class="checkbox_label" style="margin: 0; padding: 2px 6px; font-size: 13px;${item.isBlocked ? ' background: var(--SmartThemeQuoteColor, rgba(255,255,255,0.08)); border-radius: 3px;' : ''}" title="${item.name}">
+                    <input type="checkbox" id="${id}" data-ext="${item.name}" ${item.isBlocked ? 'checked' : ''} />
+                    <span>${label}</span>
+                </label>`);
+            container.append(row);
+        }
+
+        // 勾选/取消
         container.find('input[type="checkbox"]').on('change', function() {
             const extName = $(this).data('ext');
             const checked = $(this).prop('checked');
@@ -968,8 +1026,46 @@ function bindSettingsControls() {
             }
             settings.soundBlocklist = list;
             saveSettingsDebounced();
+            renderBlocklist();
+        });
+
+        // 删除自定义关键词
+        container.find('[data-del]').on('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const extName = $(this).data('del');
+            settings.soundBlocklist = settings.soundBlocklist.filter(n => n !== extName);
+            saveSettingsDebounced();
+            renderBlocklist();
         });
     }
+
+    // 搜索框
+    $('#vertin-tips-blocklist-search').on('input', function() {
+        renderBlocklist();
+    });
+
+    // 添加自定义关键词
+    $('#vertin-tips-blocklist-add').on('click', function() {
+        const input = $('#vertin-tips-blocklist-custom');
+        const val = (input.val() || '').trim();
+        if (!val) return;
+        let list = Array.isArray(settings.soundBlocklist) ? settings.soundBlocklist : [];
+        if (!list.includes(val)) {
+            list.push(val);
+            settings.soundBlocklist = list;
+            saveSettingsDebounced();
+        }
+        input.val('');
+        renderBlocklist();
+        if (window.toastr) window.toastr.success('已添加屏蔽关键词');
+    });
+    $('#vertin-tips-blocklist-custom').on('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            $('#vertin-tips-blocklist-add').trigger('click');
+        }
+    });
 
     // 测试按钮
     $('#vertin-tips-test-success').on('click', function() {
