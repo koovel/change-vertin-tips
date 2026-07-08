@@ -1,5 +1,5 @@
 import { eventSource, event_types, saveSettingsDebounced, is_send_press } from '../../../../script.js';
-import { extension_settings } from '../../../extensions.js';
+import { extension_settings, extensionNames } from '../../../extensions.js';
 import { getRequestHeaders } from '../../../../script.js';
 
 const extensionName = 'vertin-tips';
@@ -11,7 +11,8 @@ const defaultSettings = {
     flashTabEnabled: true,   // 标签页闪烁开关
     volume: 0.5,
     successSound: 'voice.mp3',  // 成功提示音文件名
-    errorSound: 'error_normal.mp3'  // 错误提示音文件名
+    errorSound: 'error_normal.mp3',  // 错误提示音文件名
+    soundBlocklist: []  // 屏蔽列表：匹配的URL片段不触发错误音
 };
 
 // 设置 Favicon 的辅助函数
@@ -109,6 +110,17 @@ let generationState = {
     lastErrorTime: 0
 };
 
+// 检查URL或消息是否在屏蔽列表中
+function isBlocked(text) {
+    const list = extension_settings[extensionName]?.soundBlocklist;
+    if (!list || !Array.isArray(list) || list.length === 0) return false;
+    const lower = String(text || '').toLowerCase();
+    return list.some(fragment => {
+        const f = String(fragment || '').trim().toLowerCase();
+        return f && lower.includes(f);
+    });
+}
+
 // 初始化扩展
 jQuery(async () => {
    // 加载设置
@@ -126,8 +138,11 @@ jQuery(async () => {
    if (settings.soundEnabled === undefined) {
        settings.soundEnabled = defaultSettings.soundEnabled;
    }
-   if (settings.flashTabEnabled === undefined) {
-       settings.flashTabEnabled = defaultSettings.flashTabEnabled;
+  if (settings.flashTabEnabled === undefined) {
+      settings.flashTabEnabled = defaultSettings.flashTabEnabled;
+  }
+   if (!Array.isArray(settings.soundBlocklist)) {
+       settings.soundBlocklist = [];
    }
 
    // 初始化并读取自定义音频清单（IndexedDB）
@@ -436,7 +451,7 @@ function interceptFetchErrors() {
             const url = (args[0]?.url) || (args[0]?.toString ? args[0].toString() : String(args[0] || ''));
 
             // 检查是否是API请求且返回错误状态
-            if (url.includes('/api/') && !response.ok && response.status >= 400) {
+            if (url.includes('/api/') && !response.ok && response.status >= 400 && !isBlocked(url)) {
                 const errorInfo = `HTTP ${response.status} ${response.statusText}`;
                 console.log(`[${extensionName}] 检测到HTTP错误: ${errorInfo} - ${url}`);
 
@@ -458,7 +473,7 @@ function interceptFetchErrors() {
         } catch (error) {
             // 网络错误（无法连接、超时等）
             const url = (args[0]?.url) || (args[0]?.toString ? args[0].toString() : String(args[0] || ''));
-            if (url.includes('/api/') && generationState.isGenerating) {
+            if (url.includes('/api/') && generationState.isGenerating && !isBlocked(url)) {
                 console.log(`[${extensionName}] 检测到网络错误: ${error.message}`);
                 generationState.wasStoppedOrError = true;
                 generationState.lastErrorTime = Date.now();
@@ -510,6 +525,11 @@ function interceptToastrErrors() {
         const fullText = `${title || ''} ${message || ''}`;
         let isApiError = false;
         let errorType = 'unknown';
+
+        // 屏蔽列表检查：如果消息匹配屏蔽片段，跳过
+        if (isBlocked(fullText)) {
+            return originalToastrError.call(this, message, title, options);
+        }
 
         // 检查是否包含API关键词
         if (title && (title.includes('API') || title.includes('Error') || title.includes('Failed'))) {
@@ -830,6 +850,16 @@ function addSettingsUI() {
                             <input id="vertin-tips-volume" type="range" min="0" max="100" value="50" style="width: 100%;" />
                         </label>
                     </div>
+
+                    <!-- 屏蔽列表 -->
+                    <div style="margin-bottom: 10px;">
+                        <label>屏蔽扩展（勾选后该扩展的错误完全不触发提示音）:</label>
+                        <div id="vertin-tips-blocklist" style="max-height: 160px; overflow-y: auto; border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 6px; display: flex; flex-direction: column; gap: 4px;">
+                        </div>
+                        <div style="margin-top: 4px; font-size: 12px; color: #888; line-height: 1.4;">
+                            勾选的扩展出错时不播放错误音，也不影响成功音。列表自动获取已安装扩展。
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -897,6 +927,49 @@ function bindSettingsControls() {
 
     // 更新音量显示
     $('#vertin-tips-volume-value').text(Math.round(settings.volume * 100));
+
+    // 屏蔽列表：自动获取已安装扩展，渲染为复选框
+    if (!Array.isArray(settings.soundBlocklist)) settings.soundBlocklist = [];
+    renderBlocklist();
+
+    function renderBlocklist() {
+        const container = $('#vertin-tips-blocklist');
+        container.empty();
+
+        const names = Array.isArray(window.extensionNames) ? window.extensionNames : (Array.isArray(extensionNames) ? extensionNames : []);
+        // 合并：已安装扩展 + settings中保存但当前可能未安装的（避免丢失）
+        const allNames = [...new Set([...names, ...settings.soundBlocklist])].sort((a, b) => a.localeCompare(b));
+
+        if (allNames.length === 0) {
+            container.append('<div style="font-size: 12px; color: #888;">未检测到已安装扩展</div>');
+            return;
+        }
+
+        const blocked = new Set(settings.soundBlocklist);
+        for (const name of allNames) {
+            const id = `vertin-tips-bl-${name.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+            const isChecked = blocked.has(name);
+            const item = $(`
+                <label class="checkbox_label" style="margin: 0; padding: 2px 6px; font-size: 13px;" title="${name}">
+                    <input type="checkbox" id="${id}" data-ext="${name}" ${isChecked ? 'checked' : ''} />
+                    <span>${name}</span>
+                </label>`);
+            container.append(item);
+        }
+
+        container.find('input[type="checkbox"]').on('change', function() {
+            const extName = $(this).data('ext');
+            const checked = $(this).prop('checked');
+            let list = Array.isArray(settings.soundBlocklist) ? settings.soundBlocklist : [];
+            if (checked && !list.includes(extName)) {
+                list.push(extName);
+            } else if (!checked) {
+                list = list.filter(n => n !== extName);
+            }
+            settings.soundBlocklist = list;
+            saveSettingsDebounced();
+        });
+    }
 
     // 测试按钮
     $('#vertin-tips-test-success').on('click', function() {
