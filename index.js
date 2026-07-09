@@ -199,34 +199,23 @@ async function scanAudioFiles() {
             testFiles.add(`${i}.mp3`);
         }
 
-        // 测试文件是否存在（静默处理404）
-        const existingFiles = [];
-        for (const filename of testFiles) {
+       // 测试文件是否存在（静默处理404）
+        // 并行探测以加快刷新速度，超时放宽到 1500ms 减少误判
+        const probe = (filename) => new Promise(resolve => {
             const testUrl = `/${extensionFolderPath}/audio/${folderType}/${filename}`;
-
-            // 使用AbortController来设置超时
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 500);
-
-            try {
-                const response = await fetch(testUrl, {
-                    method: 'HEAD',
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
-
-                if (response.ok) {
-                    existingFiles.push(filename);
-                    console.log(`[${extensionName}] 找到文件: ${folderType}/${filename}`);
-                }
-            } catch (e) {
-                clearTimeout(timeoutId);
-                // 静默处理错误，不输出到控制台
-            }
-        }
-
+            const timeoutId = setTimeout(() => controller.abort(), 1500);
+            fetch(testUrl, { method: 'HEAD', signal: controller.signal })
+                .then(response => { clearTimeout(timeoutId); resolve(response.ok ? filename : null); })
+                .catch(() => { clearTimeout(timeoutId); resolve(null); });
+        });
+        const results = await Promise.allSettled([...testFiles].map(probe));
+        const existingFiles = results
+            .map(r => r.status === 'fulfilled' ? r.value : null)
+            .filter(Boolean);
+        existingFiles.forEach(f => console.log(`[${extensionName}] 找到文件: ${folderType}/${f}`));
         return existingFiles;
-    }
+   }
 
     // 扫描成功音频文件
     const newSuccessFiles = await getFilesFromFolder('success');
@@ -810,10 +799,13 @@ function addSettingsUI() {
                             <select id="vertin-tips-success-select" class="text_pole" style="flex: 1; min-width: 220px;">
                                 <option value="">无</option>
                             </select>
-                            <button id="vertin-tips-test-success" class="menu_button" title="测试">
-                                <i class="fa-solid fa-play"></i>
+                           <button id="vertin-tips-test-success" class="menu_button" title="测试">
+                               <i class="fa-solid fa-play"></i>
+                           </button>
+                            <button id="vertin-tips-refresh-success" class="menu_button" title="刷新音频列表">
+                                <i class="fa-solid fa-rotate-right"></i>
                             </button>
-                            <button id="vertin-tips-upload-success" class="menu_button" title="上传本地文件">
+                           <button id="vertin-tips-upload-success" class="menu_button" title="上传本地文件">
                                 <i class="fa-solid fa-upload"></i>
                             </button>
                             <button id="vertin-tips-delete-success" class="menu_button" title="删除当前自定义音效" style="display:none;">
@@ -830,10 +822,13 @@ function addSettingsUI() {
                             <select id="vertin-tips-error-select" class="text_pole" style="flex: 1; min-width: 220px;">
                                 <option value="">无</option>
                             </select>
-                            <button id="vertin-tips-test-error" class="menu_button" title="测试">
-                                <i class="fa-solid fa-play"></i>
+                           <button id="vertin-tips-test-error" class="menu_button" title="测试">
+                               <i class="fa-solid fa-play"></i>
+                           </button>
+                            <button id="vertin-tips-refresh-error" class="menu_button" title="刷新音频列表">
+                                <i class="fa-solid fa-rotate-right"></i>
                             </button>
-                            <button id="vertin-tips-upload-error" class="menu_button" title="上传本地文件">
+                           <button id="vertin-tips-upload-error" class="menu_button" title="上传本地文件">
                                 <i class="fa-solid fa-upload"></i>
                             </button>
                             <button id="vertin-tips-delete-error" class="menu_button" title="删除当前自定义音效" style="display:none;">
@@ -857,11 +852,14 @@ function addSettingsUI() {
                         <!-- 自定义关键词输入 -->
                         <div style="display: flex; gap: 5px; align-items: center; flex-wrap: wrap; margin-bottom: 6px;">
                             <input id="vertin-tips-blocklist-custom" type="text" class="text_pole" placeholder="自定义URL关键词，如: baibaoku" style="flex: 1; min-width: 160px;" />
-                            <button id="vertin-tips-blocklist-add" class="menu_button" title="添加关键词">
-                                <i class="fa-solid fa-plus"></i>
+                           <button id="vertin-tips-blocklist-add" class="menu_button" title="添加关键词">
+                               <i class="fa-solid fa-plus"></i>
+                           </button>
+                            <button id="vertin-tips-blocklist-refresh" class="menu_button" title="刷新扩展列表">
+                                <i class="fa-solid fa-rotate-right"></i>
                             </button>
-                        </div>
-                        <!-- 搜索框 -->
+                       </div>
+                       <!-- 搜索框 -->
                         <input id="vertin-tips-blocklist-search" type="text" class="text_pole" placeholder="搜索扩展..." style="width: 100%; margin-bottom: 4px;" />
                         <!-- 列表容器 -->
                         <div id="vertin-tips-blocklist" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--SmartThemeBorderColor); border-radius: 5px; padding: 6px; display: flex; flex-direction: column; gap: 2px;">
@@ -1067,15 +1065,69 @@ function bindSettingsControls() {
         }
     });
 
-    // 测试按钮
-    $('#vertin-tips-test-success').on('click', function() {
-        playSuccessSound();
+   // 测试按钮
+   $('#vertin-tips-test-success').on('click', function() {
+       playSuccessSound();
+   });
+   $('#vertin-tips-test-error').on('click', function() {
+       playErrorSound();
+   });
+
+    // 刷新音频列表按钮
+    async function refreshAudioList(kind) {
+        const btnId = kind === 'success' ? '#vertin-tips-refresh-success' : '#vertin-tips-refresh-error';
+        const $btn = $(btnId);
+        const $icon = $btn.find('i');
+        $icon.addClass('fa-spin');
+        $btn.prop('disabled', true);
+        try {
+            const result = await scanAudioFiles();
+            // 重新加载自定义音频清单，确保最新
+            try { await loadCustomAudios(); } catch {}
+            if (kind === 'success' && !result.successChanged) {
+                if (window.toastr) window.toastr.info('成功音频列表未变化');
+            } else if (kind === 'error' && !result.errorChanged) {
+                if (window.toastr) window.toastr.info('错误音频列表未变化');
+            } else {
+                if (window.toastr) window.toastr.success(`已刷新${kind === 'success' ? '成功' : '错误'}音频列表`);
+            }
+            updateSelectOptions();
+            initAudio();
+        } catch (e) {
+            console.error(`[${extensionName}] 刷新音频列表失败:`, e);
+            if (window.toastr) window.toastr.error('刷新失败');
+        } finally {
+            $icon.removeClass('fa-spin');
+            $btn.prop('disabled', false);
+        }
+    }
+    $('#vertin-tips-refresh-success').on('click', function() {
+        refreshAudioList('success');
     });
-    $('#vertin-tips-test-error').on('click', function() {
-        playErrorSound();
+    $('#vertin-tips-refresh-error').on('click', function() {
+        refreshAudioList('error');
     });
 
-    // ========== 上传（仅本地文件） ==========
+    // 刷新屏蔽列表（重新读取已安装扩展并渲染）
+    $('#vertin-tips-blocklist-refresh').on('click', async function() {
+        const $btn = $(this);
+        const $icon = $btn.find('i');
+        $icon.addClass('fa-spin');
+        $btn.prop('disabled', true);
+        try {
+            await loadExtDisplayNames();
+            renderBlocklist();
+            if (window.toastr) window.toastr.success('已刷新扩展列表');
+        } catch (e) {
+            console.error(`[${extensionName}] 刷新扩展列表失败:`, e);
+            if (window.toastr) window.toastr.error('刷新失败');
+        } finally {
+            $icon.removeClass('fa-spin');
+            $btn.prop('disabled', false);
+        }
+    });
+
+   // ========== 上传（仅本地文件） ==========
     function validateFile(file) {
         if (!file) return '未选择文件';
         const okType = file.type?.startsWith('audio/') || /\.(mp3|wav|ogg)$/i.test(file.name || '');
